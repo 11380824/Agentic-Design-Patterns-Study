@@ -1,0 +1,14 @@
+# Secrets
+.env
+
+# Python environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Runtime-generated artifacts
+ch8_longterm_memory.json
+binarygap_*.py
