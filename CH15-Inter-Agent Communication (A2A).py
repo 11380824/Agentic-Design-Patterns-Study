@@ -104,23 +104,32 @@ def researcher_agent(user_query: str) -> str:
     card = BUS.discover("WeatherBot")
     print(f">>> 研究员发现服务器能力：{[s['id'] for s in card['skills']]}")
 
-    # (b) 用 DeepSeek 从问题里抽要查的城市（客户端决定委派什么）
-    city = llm.invoke([SystemMessage(content="从问题抽城市名，只回一个词，没有回 NONE。"),
-                      HumanMessage(content=user_query)]).content.strip()
-    if city.upper() == "NONE":
+    # (b) 用 DeepSeek 从问题里抽所有要查的城市（客户端决定委派什么）
+    cities_raw = llm.invoke([SystemMessage(content="从问题中抽取所有城市名，用中文逗号或顿号分隔成列表返回；若没有城市，只回 NONE。"),
+                             HumanMessage(content=user_query)]).content.strip()
+    if cities_raw.upper() == "NONE":
+        return "问题中没有可委派给 WeatherBot 的城市。"
+    # 兼容逗号/顿号/空格分隔，统一拆成城市列表
+    cities = [c.strip() for c in cities_raw.replace("、", ",").replace("，", ",").split(",") if c.strip()]
+    if not cities:
         return "问题中没有可委派给 WeatherBot 的城市。"
 
-    # (c) 委派：客户端发 sendTask 给服务器（异步任务语义）
-    result = BUS.send_task(client="ResearcherAgent", server="WeatherBot",
-                           skill_id="get_weather", payload=city)
-    if result["state"] != "completed":
-        return f"委派失败：{result['artifact']}"
+    # (c) 委派：对每个城市循环发 sendTask 给服务器（异步任务语义，循环委派）
+    artifacts = []
+    for city in cities:
+        result = BUS.send_task(client="ResearcherAgent", server="WeatherBot",
+                               skill_id="get_weather", payload=city)
+        if result["state"] != "completed":
+            artifacts.append(f"{city} 委派失败：{result['artifact']}")
+        else:
+            artifacts.append(result["artifact"])
 
-    # (d) 综合：把服务器返回的 artifact 交给 DeepSeek 组织成最终答复
+    # (d) 综合：把所有服务器返回的 artifact 交给 DeepSeek 组织成最终答复
+    weather_data = "\n".join(artifacts)
     if llm:
         return llm.invoke([SystemMessage(content="你是研究助手，基于工具返回写一句中文结论。"),
-                           HumanMessage(content=f"用户问题：{user_query}\n天气数据：{result['artifact']}")]).content
-    return result["artifact"]
+                           HumanMessage(content=f"用户问题：{user_query}\n天气数据：\n{weather_data}")]).content
+    return weather_data
 
 
 if __name__ == "__main__":
